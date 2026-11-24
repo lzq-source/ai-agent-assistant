@@ -2,23 +2,12 @@ from typing import Annotated,Literal,TypedDict
 import operator
 
 from langchain_ollama import ChatOllama
-from langchain_core.tools import tool
 from langchain_core.messages import AnyMessage,HumanMessage,ToolMessage
 from langgraph.graph import StateGraph,START,END
+from my_tools import get_current_time,read_file,calculator
 
-@tool
-def mul(a:int,b:int) ->int:
-    """
-    计算两个数的乘积
-
-    Args:
-        a:第一个整数
-        b:第二个整数
-    """
-    return a * b
-
-tools = [mul]
-tool_by_name = {t.name :t for t in tools}
+tools = [get_current_time,read_file,calculator]
+tool_by_name = {t.name:t for t in tools}
 
 model = ChatOllama(
     model="qwen2.5:3b",
@@ -38,14 +27,26 @@ def tool_node(state:State):
     """节点2：执行模型请求的工具"""
     out = []
     for tc in state["messages"][-1].tool_calls:
-        t = tool_by_name[tc["name"]]
-        result = t.invoke(tc["args"])
+        name = tc["name"]
+        print(f"[tool_node] 调用工具：{name} | 参数：{tc['args']}")
+        
+        t = tool_by_name.get(name)
+        
+        if t is None:
+            result = f"工具不存在：{name}"
+        else:
+            try:
+                result = t.invoke(tc["args"])
+            except Exception as exc:
+                result = f"工具执行失败：{exc}"
         out.append(
             ToolMessage(
                 content=str(result),
                 tool_call_id=tc["id"],
-            )
+                
         )
+    )
+        
     return {"messages":out}
 
 def should_continue(state: State) -> Literal["tool_node","__end__"]:
@@ -70,17 +71,19 @@ builder.add_edge("tool_node","llm_call")
 graph = builder.compile()
 
 # 运行
-result = graph.invoke({
-    "messages":[
-        HumanMessage(content="请使用 mul 工具计算 23 乘以 45 等于多少")
+if __name__ == "__main__":
+    questions = [
+        "现在几点了？",
+        "帮我算（12+8）*3",
+        "读一下 docs/note.txt 里面写了什么",
     ]
-})
 
-print("消息流转：")
-for msg in result["messages"]:
-    print(
-        type(msg).__name__,
-        "| content =",msg.content,
-        "| tool_calls =",getattr(msg,"tool_calls",None),
-    )
-print("\n最终答案：",result["messages"][-1].content)
+    for question in questions:
+        print("\n" + "=" * 60)
+        print("问题：",question)
+        result = graph.invoke({
+            "messages":[
+                HumanMessage(content=question)
+            ]
+        })
+        print("\n最终答案：",result["messages"][-1].content)
